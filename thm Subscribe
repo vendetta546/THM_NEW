@@ -1,0 +1,139 @@
+Part I Offensive Challenge:
+Recon
+We start with a Nmap scan and find six open ports, of which only port 80 and 40009 are relevant for the offensive part.
+
+
+The service and script scan shows that the rest is from Splunk, which belongs to the second part of the room.
+
+
+Visiting, 40009 for now gives us only 403 response on each resource, so we are not able to enumerate it further.
+
+We move on to the endpoint on port 80 and visit the site and see that there is a sign-up and login page. The registration is currently deactivated, and we can't find any other directories at first glance via Gobuster.
+
+
+Sign-Up
+Looking at the source of the sign-up page, we find a piece of minified JavaScript:
+
+
+We use a beautifier to make this readable, and find the function e in it, which calls inviteCode1337HM.php when executed, if the hostname capture3millionsubscribers.thm was identified. Maybe this will give us a code. We add the domain to the /etc/hosts file.
+
+Logo
+Online JavaScript beautifier
+invite.js
+Copy
+function e() {
+    var e = window.location.hostname;
+    if (e === "capture3millionsubscribers.thm") {
+        var o = new XMLHttpRequest;
+        o.open("POST", "inviteCode1337HM.php", true);
+        o.onload = function() {
+            if (this.status == 200) {
+                console.log("Invite Code:", this.responseText)
+            } else {
+                console.error("Error fetching invite code.")
+            }
+        };
+        o.send()
+    } else if (e === "hackme.thm") {
+        console.log("This function does not operate on hackme.thm")
+    } else {
+        console.log("Lol!! Are you smart enought to get the invite code?")
+    }
+}
+We then call up the signup page again and execute the following piece of code in the console to execute the e function:
+
+Copy
+(function() {
+    e();
+})();
+After execution, we will receive the invite code.
+
+
+Login
+Providing the invite code, we get some credentials.
+
+
+With those, we are able to log in...
+
+
+...and get redirected to the dashboard, facing training rooms divided in VIP and free.
+
+
+By capturing the dashboard.php request, we see the VIP status is set by a Cookie parameter.
+
+Being VIP
+
+Setting it to true, we are able to reach to the Advanced Red Teaming room. Here we should be able to start a machine like we are used to being on TryHackMe.
+
+
+To have the variable set automatically, we can use the matcher of burp suite to set its content to true, to not have to do it on each request.
+
+
+But by clicking on Start Machine, we get an alert that only VIP users are allowed. 
+
+Checking out the source we see a script referencing a hidden field to check for the VIP status dang, either we use OWASP ZAP to change the response or we look around what that button reaches out to.
+
+
+
+Ok, it makes a request to /BBF813FA941496FCE961EBA46D754FF3.php  
+
+
+We try to access the page directly and find an emulated terminal.
+
+Copy
+http://hackme.thm/BBF813FA941496FCE961EBA46D754FF3.php
+
+We are allowed us use the command ls.
+
+
+We cannot cat all the files, seems like only config.php is possible to open. Here we find a secure token and the secret subdomain.domain used to reach out content on port 40009.
+
+
+Admin Login
+After adding admin1337special.hackme.thm to /etc/host and reaching out on it, we are redirected to /public/html, but this site gives us still an 403.
+
+
+Using gobuster on that directory we are able to locate the login page, maybe here we can make use of the token.
+
+
+And we have a page to provide a token. We use the token.
+
+
+After providing the token, we are requested to log in, but we did not find any admin creds so fart. Trying the signup creds does not work.
+
+
+We capture an arbitrary login request to make use of SQLMap, maybe we are able to dump the database behind the login. 
+
+
+Triggering SLQMap on the request, we are able to dump the database...
+
+
+... and retrieve the admin credentials.
+
+
+After logging in, we are at the dashboard and are able to select an action, choosing Sign Up and then Set  Options nothing happens at first glance.
+
+
+But after heading back to hackme.thm/ the final flag is presented. 
+
+
+Part II Defensive Challenge: Splunk
+We head to Search & Reporting and provide the following query.
+
+index=* with a time of All time. We see we have 10530 events and by checking out the agents we know that SQLMap wass used on the target.
+
+
+To find out the attackers source ip just filter by the user_agent.
+
+Copy
+index=* user_agent="sqlmap/1.2.4#stable (http://sqlmap.org)"
+
+To filter out the events obsserved by the ip we filter by the ip:
+
+Copy
+index=* source_ip="83.45.212.17"
+
+We try to filter for all queries made in the raw datablock. That did not qork quiet well, but at the last page, the last entry we can determine the targeted table.
+
+Copy
+index=* user_agent="sqlmap/1.2.4#stable (http://sqlmap.org)" | regex _raw="(\b(SELECT|UNION|INSERT|DELETE|UPDATE)\b|['";\-\-])" | table _time, host, src_ip, uri, _raw
